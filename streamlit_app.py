@@ -97,6 +97,31 @@ def marker_of(category: str):
     key = (category or "").strip()
     return CATEGORY_MARKERS.get(key, DEFAULT_MARKER)
 
+def make_popup_html(row: dict) -> str:
+    name   = row.get("name", "Sin nombre")
+    muni   = row.get("municipio", "No Info")
+    dim    = row.get("dimension", "")
+    subd   = row.get("sub_dimension", "")
+    cat    = (row.get("category") or "").strip()
+    ptype  = row.get("place_type", "")
+    rating = row.get("average_rating", "No Info")
+    reviews= row.get("user_ratings_total", 0)
+    link   = row.get("map_link", "")
+
+    link_html = f"<br><b>Google:</b> <a href='{link}' target='_blank'>Ver en Google</a>" if link else ""
+    return (
+        f"<div style='font-size:13px'>"
+        f"<b>{name}</b>"
+        f"<br><b>Municipio:</b> {muni}"
+        f"<br><b>Dimensión:</b> {dim}"
+        f"<br><b>Sub-dimensión:</b> {subd}"
+        f"<br><b>Categoría:</b> {cat}"
+        f"<br><b>Tipo de lugar:</b> {ptype}"
+        f"<br><b>Rating:</b> {rating} ({reviews} reviews)"
+        f"{link_html}"
+        f"</div>"
+    )
+
 # =============  DATA  =============
 @st.cache_data
 def load_data(csv_path: str = "map_data.csv") -> pd.DataFrame:
@@ -245,32 +270,14 @@ if ready_to_plot and not fdf.empty:
             cat = (r.get("category") or "").strip()
             icon_name, color = marker_of(cat)
 
-            name = r.get("name", "Sin nombre")
-            muni = r.get("municipio", "No Info")
-            dim  = r.get("dimension", "")
-            subd = r.get("sub_dimension", "")
-            ptype = r.get("place_type", "")
-            rating = r.get("average_rating", "No Info")
-            reviews = r.get("user_ratings_total", 0)
-            link = r.get("map_link", "")
-
-            html = (
-                f"<b>{name}</b>"
-                f"<br>Municipio: {muni}"
-                f"<br>Dimensión: {dim}"
-                f"<br>Sub-dimensión: {subd}"
-                f"<br>Categoría: {cat}"
-                f"<br>Tipo de lugar: {ptype}"
-                f"<br>Rating: {rating} ({reviews} reviews)"
-            )
-            if link:
-                html += f"<br><a href='{link}' target='_blank'>Ver en Google</a>"
+            name = r.get("name", "Sin nombre")  # tooltip
+            html = make_popup_html(r)
 
             folium.Marker(
                 [r["latitude"], r["longitude"]],
                 icon=folium.Icon(icon=icon_name, color=color, prefix="fa"),
                 tooltip=name,
-                popup=html
+                popup=folium.Popup(html, max_width=320)
             ).add_to(fmap)
 
     folium.LayerControl(collapsed=False).add_to(fmap)
