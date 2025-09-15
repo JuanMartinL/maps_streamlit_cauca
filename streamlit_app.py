@@ -250,7 +250,6 @@ if ready_to_plot and not fdf.empty:
                 f"<b>{name}</b>"
                 f"<br>Municipio: {muni}"
                 f"<br>Dimensión: {dim}"
-                f"<br>Sub-dimensión: {subd}"
                 f"<br>Categoría: {cat}"
                 f"<br>Tipo de lugar: {ptype}"
                 f"<br>Rating: {rating} ({reviews} reviews)"
