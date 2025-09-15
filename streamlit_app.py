@@ -297,8 +297,6 @@ st.title("Oferta turística — Macizo Colombiano (Cauca)")
 st.markdown(
     "Panel interactivo de **servicios y atractivos turísticos** identificados vía Google Maps, "
     "en municipios del **Macizo Colombiano (Cauca)**. "
-    "Jerarquía: **Dimensión → Sub-dimensión → Categoría → Tipo de lugar**. "
-    "Los marcadores son **únicos por tipo de lugar**."
 )
 
 if ready_to_plot and not fdf.empty:
