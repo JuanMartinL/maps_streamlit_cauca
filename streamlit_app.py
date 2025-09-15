@@ -1,4 +1,5 @@
 # streamlit_app.py
+
 import streamlit as st
 import pandas as pd
 import folium
@@ -7,7 +8,6 @@ from folium.plugins import HeatMap, Fullscreen
 from PIL import Image
 from io import BytesIO
 import base64
-import itertools
 import os
 
 # =============  PAGE SETUP  =============
@@ -25,7 +25,8 @@ st.markdown(
         .stMultiSelect [data-baseweb="tag"] div  {color:white!important;}
         .stMultiSelect>div                        {border-color:#9c3675!important;}
         input[type="checkbox"]+div svg           {color:#9c3675!important;stroke:#fff!important;fill:#9c3675!important;}
-        .smallnote {color:#666;font-size:12px;}
+        .legend-badge{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle;}
+        .legend-row{font-size:12px;margin-bottom:6px;}
     </style>
     """,
     unsafe_allow_html=True,
@@ -63,18 +64,38 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
 
-# =============  ICONOS  =============
-# (Se puede ampliar por place_type; fallback a default)
-ICON_MAP = {
-    "restaurant": ("utensils", "blue"),
-    "lodging": ("bed", "green"),
-    "park": ("tree", "darkgreen"),
-    "viewpoint": ("binoculars", "purple"),
-    "museum": ("university", "orange"),
-    "church": ("church", "cadetblue"),
-    "market": ("shopping-basket", "darkred"),
-    "default": ("map-marker", "gray"),
+# =============  CATEGORY MARKERS (icon + color)  =============
+# Colores válidos (AwesomeMarkers): red, darkred, lightred, orange, beige,
+# green, darkgreen, lightgreen, blue, darkblue, lightblue, purple, darkpurple,
+# pink, cadetblue, white, gray, lightgray, black
+# Íconos FA "fa" (compatibles con versiones comunes de folium/awesome-markers)
+CATEGORY_MARKERS = {
+    "Alojamiento / Hospedajes":           ("bed",             "green"),
+    "Restaurantes":                       ("cutlery",         "blue"),
+    "Agencias de viaje y guías":          ("suitcase",        "purple"),
+    "Transporte turístico":               ("car",             "darkblue"),
+    "Puntos de información":              ("info-circle",     "cadetblue"),
+    "Atractivos culturales":              ("university",      "orange"),
+    "Atractivos naturales":               ("tree",            "darkgreen"),
+    "Atractivos comunitarios":            ("users",           "lightgray"),
+    "Salud":                              ("medkit",          "red"),
+    "Financieros":                        ("money",           "darkred"),
+    "Transporte Público":                 ("bus",             "darkpurple"),
+    "Internet":                           ("wifi",            "lightblue"),
+    "Peajes":                             ("road",            "gray"),
+    "Estaciones de servicio":             ("tint",            "black"),
+    "Servicios de emergencia":            ("ambulance",       "lightred"),
+    "Experiencias y rutas culturales":    ("map",             "beige"),
+    "Experiencias de naturaleza y montaña":("leaf",           "lightgreen"),
+    "Avistamiento de flora y fauna":      ("binoculars",      "green"),
+    "Experiencias de aventura y agroturismo": ("bicycle",     "darkblue"),
+    "Servicios Wellness":                 ("heart",           "pink"),
 }
+DEFAULT_MARKER = ("map-marker", "gray")
+
+def marker_of(category: str):
+    key = (category or "").strip()
+    return CATEGORY_MARKERS.get(key, DEFAULT_MARKER)
 
 # =============  DATA  =============
 @st.cache_data
@@ -109,6 +130,9 @@ def load_data(csv_path: str = "map_data.csv") -> pd.DataFrame:
     link_cols = [c for c in ["place_link", "google_maps_url", "gmaps_url_canonical", "url"] if c in df.columns]
     df["map_link"] = df[link_cols[0]] if link_cols else ""
 
+    # normalizar categoría con strip para que coincida con el mapping
+    df["category"] = df["category"].astype(str).str.strip()
+
     # descartamos filas sin coordenadas
     df = df.dropna(subset=["latitude", "longitude"])
     return df
@@ -129,29 +153,28 @@ else:
     mun_all = sorted(df["municipio"].dropna().unique().tolist())
 sel_mun = st.sidebar.multiselect("Municipio", mun_all, default=(mun_all if sel_corr else []))
 
-# 3) Dimensión (top de la jerarquía)
+# 3) Dimensión
 if sel_mun:
     dim_all = sorted(df[df["municipio"].isin(sel_mun)]["dimension"].dropna().unique().tolist())
 else:
     dim_all = sorted(df["dimension"].dropna().unique().tolist())
 sel_dim = st.sidebar.multiselect("Dimensión", dim_all, default=[])
 
-# 4) Sub-dimensión (2do nivel)
+# 4) Sub-dimensión
 if sel_dim:
     tmp_sub = df[df["dimension"].isin(sel_dim)]
     if sel_mun: tmp_sub = tmp_sub[tmp_sub["municipio"].isin(sel_mun)]
 else:
     tmp_sub = df[df["municipio"].isin(sel_mun)] if sel_mun else df
-
 subdim_all = sorted(tmp_sub["sub_dimension"].dropna().unique().tolist())
 sel_subdim = st.sidebar.multiselect("Sub-dimensión", subdim_all, default=[])
 
-# 5) Categoría (3er nivel)
+# 5) Categoría
 tmp_cat = tmp_sub[tmp_sub["sub_dimension"].isin(sel_subdim)] if sel_subdim else tmp_sub
 cat_all = sorted(tmp_cat["category"].dropna().unique().tolist())
 sel_cat = st.sidebar.multiselect("Categoría", cat_all, default=[])
 
-# 6) Tipo de lugar (4to nivel)
+# 6) Tipo de lugar
 tmp_ptype = tmp_cat[tmp_cat["category"].isin(sel_cat)] if sel_cat else tmp_cat
 ptype_all = sorted(tmp_ptype["place_type"].dropna().unique().tolist())
 sel_ptype = st.sidebar.multiselect("Tipo de lugar", ptype_all, default=[])
@@ -160,7 +183,15 @@ st.sidebar.markdown("---")
 show_markers = st.sidebar.checkbox("Mostrar marcadores", True)
 show_heatmap = st.sidebar.checkbox("Mostrar mapa de calor", False)
 
-# =============  FILTRADO DE DATOS  =============
+# ======= MINI-LEYENDA EN SIDEBAR (por categoría) =======
+with st.sidebar.expander("Leyenda de categorías", expanded=False):
+    for cat, (ico, col) in CATEGORY_MARKERS.items():
+        st.markdown(
+            f"""<div class="legend-row"><span class="legend-badge" style="background:{col};"></span>{cat}</div>""",
+            unsafe_allow_html=True
+        )
+
+# =============  FILTRADO  =============
 fdf = df.copy()
 if sel_corr:   fdf = fdf[fdf["corredor"].isin(sel_corr)]
 if sel_mun:    fdf = fdf[fdf["municipio"].isin(sel_mun)]
@@ -169,7 +200,6 @@ if sel_subdim: fdf = fdf[fdf["sub_dimension"].isin(sel_subdim)]
 if sel_cat:    fdf = fdf[fdf["category"].isin(sel_cat)]
 if sel_ptype:  fdf = fdf[fdf["place_type"].isin(sel_ptype)]
 
-# Condición de render: al menos una dimensión seleccionada (driver de negocio)
 ready_to_plot = bool(sel_dim)
 
 # =============  HEADER  =============
@@ -177,10 +207,9 @@ st.title("Oferta turística — Macizo Colombiano (Cauca)")
 st.markdown(
     "Panel interactivo de **servicios y atractivos turísticos** identificados vía Google Maps, "
     "en municipios del **Macizo Colombiano (Cauca)**. "
-    "Siga la jerarquía: **Dimensión → Sub-dimensión → Categoría → Tipo de lugar**."
+    "Jerarquía de filtros: **Dimensión → Sub-dimensión → Categoría → Tipo de lugar**. "
+    "Los marcadores del mapa son **únicos por categoría** (icono + color)."
 )
-
-# Nota: Termales removidos del mapa según lineamiento actual.
 
 # =============  CONTENIDO  =============
 if ready_to_plot and not fdf.empty:
@@ -188,16 +217,13 @@ if ready_to_plot and not fdf.empty:
     st.markdown("### Resultados filtrados")
     show_cols = [
         "name","municipio","dimension","sub_dimension","category","place_type",
-        "average_rating","user_ratings_total","latitude","longitude"
+        "average_rating","user_ratings_total","latitude","longitude","map_link"
     ]
     cols_present = [c for c in show_cols if c in fdf.columns]
-    # ordenar por rating numérico si aplica
     table = fdf.copy()
-    # rating puede ser string "No Info"; convertimos con coerción
     if "average_rating" in table.columns:
         table["_avg_num"] = pd.to_numeric(table["average_rating"], errors="coerce")
-        table = table.sort_values(by=["_avg_num"], ascending=False)
-        table = table.drop(columns=["_avg_num"])
+        table = table.sort_values(by=["_avg_num"], ascending=False).drop(columns=["_avg_num"], errors="ignore")
     st.dataframe(table[cols_present], use_container_width=True)
     st.download_button(
         "Descargar CSV",
@@ -207,41 +233,23 @@ if ready_to_plot and not fdf.empty:
     )
 
     # -------- Mapa --------
-    # Color clave: sub_dimension (según prioridad en jerarquía). Si faltara, usa category/place_type.
-    color_key_series = (
-        fdf["sub_dimension"]
-        .fillna(fdf["category"])
-        .fillna(fdf["place_type"])
-    )
-    palette = itertools.cycle([
-        "blue","green","red","orange","purple","darkred",
-        "cadetblue","pink","darkblue","lightgray","darkpurple","black"
-    ])
-    color_map = {k: next(palette) for k in color_key_series.dropna().unique()}
-
-    # Centro del mapa
     mlat, mlon = fdf["latitude"].mean(), fdf["longitude"].mean()
     fmap = folium.Map([mlat, mlon], zoom_start=9, control_scale=True)
     Fullscreen(position="topright", title="Pantalla completa", title_cancel="Salir").add_to(fmap)
 
-    # Heatmap (opcional)
     if show_heatmap:
         HeatMap(fdf[["latitude","longitude"]].values.tolist(), radius=12, blur=15).add_to(fmap)
 
-    # Marcadores (opcional)
     if show_markers:
         for _, r in fdf.iterrows():
-            key = r.get("sub_dimension") or r.get("category") or r.get("place_type") or "default"
-            color = color_map.get(key, "gray")
-
-            ptype = str(r.get("place_type") or "").lower()
-            icon_name, default_color = ICON_MAP.get(ptype, ICON_MAP["default"])
+            cat = (r.get("category") or "").strip()
+            icon_name, color = marker_of(cat)
 
             name = r.get("name", "Sin nombre")
             muni = r.get("municipio", "No Info")
             dim  = r.get("dimension", "")
             subd = r.get("sub_dimension", "")
-            cat  = r.get("category", "")
+            ptype = r.get("place_type", "")
             rating = r.get("average_rating", "No Info")
             reviews = r.get("user_ratings_total", 0)
             link = r.get("map_link", "")
@@ -250,6 +258,7 @@ if ready_to_plot and not fdf.empty:
                 f"<b>{name}</b>"
                 f"<br>Municipio: {muni}"
                 f"<br>Dimensión: {dim}"
+                f"<br>Sub-dimensión: {subd}"
                 f"<br>Categoría: {cat}"
                 f"<br>Tipo de lugar: {ptype}"
                 f"<br>Rating: {rating} ({reviews} reviews)"
@@ -270,4 +279,4 @@ if ready_to_plot and not fdf.empty:
 elif ready_to_plot and fdf.empty:
     st.warning("No se encontraron resultados con los filtros seleccionados. Ajuste la segmentación.")
 else:
-    st.info("Para visualizar resultados, seleccione al menos una **Dimensión** (y opcionalmente refine con Sub-dimensión, Categoría y Tipo de lugar).")
+    st.info("Para visualizar resultados, seleccione al menos una **Dimensión** (y refine con Sub-dimensión, Categoría y Tipo de lugar).")
