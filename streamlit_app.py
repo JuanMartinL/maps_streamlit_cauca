@@ -278,3 +278,5 @@ if ready_to_plot and not fdf.empty:
 
 else:
     st.info("Seleccione corredor, municipios y **dimensión** para mostrar el mapa y la tabla de datos.")
+
+# V1.1
