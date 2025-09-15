@@ -1,5 +1,12 @@
 # streamlit_app.py
 
+# streamlit_app.py
+# --------------------------------------------------
+# Oferta Turística — Macizo Colombiano (Cauca)
+# Jerarquía: dimension > sub_dimension > category > place_type
+# Marcadores únicos por place_type (icono + color)
+# --------------------------------------------------
+
 import streamlit as st
 import pandas as pd
 import folium
@@ -9,6 +16,7 @@ from PIL import Image
 from io import BytesIO
 import base64
 import os
+import unicodedata
 
 # =============  PAGE SETUP  =============
 st.set_page_config(
@@ -64,49 +72,121 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
 
-# =============  CATEGORY MARKERS (icon + color)  =============
-# Colores válidos (AwesomeMarkers): red, darkred, lightred, orange, beige,
-# green, darkgreen, lightgreen, blue, darkblue, lightblue, purple, darkpurple,
-# pink, cadetblue, white, gray, lightgray, black
-# Íconos FA "fa" (compatibles con versiones comunes de folium/awesome-markers)
-CATEGORY_MARKERS = {
-    "Alojamiento / Hospedajes":           ("bed",             "green"),
-    "Restaurantes":                       ("cutlery",         "blue"),
-    "Agencias de viaje y guías":          ("suitcase",        "purple"),
-    "Transporte turístico":               ("car",             "darkblue"),
-    "Puntos de información":              ("info-circle",     "cadetblue"),
-    "Atractivos culturales":              ("university",      "orange"),
-    "Atractivos naturales":               ("tree",            "darkgreen"),
-    "Atractivos comunitarios":            ("users",           "lightgray"),
-    "Salud":                              ("medkit",          "red"),
-    "Financieros":                        ("money",           "darkred"),
-    "Transporte Público":                 ("bus",             "darkpurple"),
-    "Internet":                           ("wifi",            "lightblue"),
-    "Peajes":                             ("road",            "gray"),
-    "Estaciones de servicio":             ("tint",            "black"),
-    "Servicios de emergencia":            ("ambulance",       "lightred"),
-    "Experiencias y rutas culturales":    ("map",             "beige"),
-    "Experiencias de naturaleza y montaña":("leaf",           "lightgreen"),
-    "Avistamiento de flora y fauna":      ("binoculars",      "green"),
-    "Experiencias de aventura y agroturismo": ("bicycle",     "darkblue"),
-    "Servicios Wellness":                 ("heart",           "pink"),
+# =============  MARCADORES POR PLACE_TYPE  =============
+def _norm(s: str) -> str:
+    s = str(s or "").strip().lower()
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return " ".join(s.split())
+
+PLACE_TYPE_LABELS = [
+    'Hoteles', 'Posadas rurales', 'Camping', 'Glamping',
+    'Viviendas turísticas', 'Fincas turísticas', 'Restaurantes',
+    'Gastronomía local', 'Dulces típicos', 'Agencias de viaje',
+    'Guía turístico', 'Transporte terrestre típico',
+    'Transporte turístico especial ', 'Puntos de información',
+    'Lugares religiosos', 'lugares culturales', 'Atractivos hídricos',
+    'Atractivos volcánicos', 'Atractivos de montaña',
+    'Flora y botánica', 'Comunidad indígena', 'Comunidad campesina',
+    'Servicios de salud básicos', 'Clínicas', 'Hospitales', 'Banco',
+    'Cajero', 'Sucursal Bancaria', 'Casa de Cambio',
+    'Terminal de transporte', 'Transporte fluvial', 'Puntos wifi',
+    'Peajes', 'Estaciones de servicio', 'Bomberos', 'Policía',
+    'Artesanías y oficios', 'Cultura y Comunidad',
+    'Arqueología y fósiles', 'Patrimonio colonial',
+    'Arquitectura simbólica', 'Cultura ancestral',
+    'Espacios naturales', 'Naturaleza Extrema',
+    'Biodiversidad y selva', 'Avistamiento de aves',
+    'Avistamiento de ranas', 'Senderismo', 'Turismo de aventura',
+    'Experiencia de la caficultura', 'rutas agroturísticas',
+    'Tratamientos y terapias de relajación',
+    'Terapias alternativas y holísticas', 'Espiritual y ancestral',
+    'Termales', 'Retiros', 'Hotel campestre',
+    'Avistamiento de fauna salvaje', 'Ruta de flora y botánica'
+]
+DISPLAY_LABEL = {_norm(x): x.strip() for x in PLACE_TYPE_LABELS}
+
+# Mapeo a íconos FA4 + colores AwesomeMarkers
+PLACE_TYPE_MARKERS = {
+    _norm('Hoteles'): ("bed", "green"),
+    _norm('Posadas rurales'): ("home", "lightgreen"),
+    _norm('Camping'): ("tree", "darkgreen"),
+    _norm('Glamping'): ("star", "pink"),
+    _norm('Viviendas turísticas'): ("home", "lightgreen"),
+    _norm('Fincas turísticas'): ("pagelines", "darkgreen"),
+    _norm('Restaurantes'): ("cutlery", "blue"),
+    _norm('Gastronomía local'): ("cutlery", "lightblue"),
+    _norm('Dulces típicos'): ("shopping-basket", "orange"),
+    _norm('Agencias de viaje'): ("suitcase", "purple"),
+    _norm('Guía turístico'): ("compass", "cadetblue"),
+    _norm('Transporte terrestre típico'): ("car", "darkblue"),
+    _norm('Transporte turístico especial'): ("car", "blue"),
+    _norm('Puntos de información'): ("info-circle", "cadetblue"),
+    _norm('Lugares religiosos'): ("building", "lightgray"),
+    _norm('lugares culturales'): ("university", "orange"),
+    _norm('Atractivos hídricos'): ("tint", "blue"),
+    _norm('Atractivos volcánicos'): ("fire", "red"),
+    _norm('Atractivos de montaña'): ("flag", "darkpurple"),
+    _norm('Flora y botánica'): ("leaf", "green"),
+    _norm('Comunidad indígena'): ("users", "beige"),
+    _norm('Comunidad campesina'): ("users", "beige"),
+    _norm('Servicios de salud básicos'): ("medkit", "red"),
+    _norm('Clínicas'): ("hospital-o", "lightred"),
+    _norm('Hospitales'): ("h-square", "darkred"),
+    _norm('Banco'): ("university", "darkred"),
+    _norm('Cajero'): ("credit-card", "darkred"),
+    _norm('Sucursal Bancaria'): ("university", "darkred"),
+    _norm('Casa de Cambio'): ("money", "darkred"),
+    _norm('Terminal de transporte'): ("bus", "darkpurple"),
+    _norm('Transporte fluvial'): ("ship", "blue"),
+    _norm('Puntos wifi'): ("wifi", "lightblue"),
+    _norm('Peajes'): ("road", "gray"),
+    _norm('Estaciones de servicio'): ("tint", "black"),
+    _norm('Bomberos'): ("fire-extinguisher", "red"),
+    _norm('Policía'): ("shield", "darkblue"),
+    _norm('Artesanías y oficios'): ("paint-brush", "orange"),
+    _norm('Cultura y Comunidad'): ("users", "orange"),
+    _norm('Arqueología y fósiles'): ("history", "gray"),
+    _norm('Patrimonio colonial'): ("university", "orange"),
+    _norm('Arquitectura simbólica'): ("building", "lightgray"),
+    _norm('Cultura ancestral'): ("book", "beige"),
+    _norm('Espacios naturales'): ("tree", "green"),
+    _norm('Naturaleza Extrema'): ("bolt", "black"),
+    _norm('Biodiversidad y selva'): ("leaf", "darkgreen"),
+    _norm('Avistamiento de aves'): ("binoculars", "green"),
+    _norm('Avistamiento de ranas'): ("binoculars", "lightgreen"),
+    _norm('Senderismo'): ("map", "darkgreen"),
+    _norm('Turismo de aventura'): ("bicycle", "darkblue"),
+    _norm('Experiencia de la caficultura'): ("coffee", "beige"),
+    _norm('rutas agroturísticas'): ("map", "lightgreen"),
+    _norm('Tratamientos y terapias de relajación'): ("heart", "pink"),
+    _norm('Terapias alternativas y holísticas'): ("heart", "lightred"),
+    _norm('Espiritual y ancestral'): ("leaf", "purple"),
+    _norm('Termales'): ("tint", "lightblue"),
+    _norm('Retiros'): ("home", "pink"),
+    _norm('Hotel campestre'): ("bed", "lightgreen"),
+    _norm('Avistamiento de fauna salvaje'): ("binoculars", "green"),
+    _norm('Ruta de flora y botánica'): ("map", "green"),
 }
-DEFAULT_MARKER = ("map-marker", "gray")
+DEFAULT_PT_MARKER = ("map-marker", "gray")
 
-def marker_of(category: str):
-    key = (category or "").strip()
-    return CATEGORY_MARKERS.get(key, DEFAULT_MARKER)
+def marker_of_place_type(place_type: str):
+    return PLACE_TYPE_MARKERS.get(_norm(place_type), DEFAULT_PT_MARKER)
 
-def make_popup_html(row: dict) -> str:
-    name   = row.get("name", "Sin nombre")
-    muni   = row.get("municipio", "No Info")
-    dim    = row.get("dimension", "")
-    subd   = row.get("sub_dimension", "")
-    cat    = (row.get("category") or "").strip()
-    ptype  = row.get("place_type", "")
-    rating = row.get("average_rating", "No Info")
-    reviews= row.get("user_ratings_total", 0)
-    link   = row.get("map_link", "")
+def label_of_place_type(place_type: str):
+    return DISPLAY_LABEL.get(_norm(place_type), str(place_type or "").strip())
+
+# =============  POPUP HELPER  =============
+def make_popup_html(r: dict) -> str:
+    name  = r.get("name", "Sin nombre")
+    muni  = r.get("municipio", "No Info")
+    dim   = r.get("dimension", "")
+    subd  = r.get("sub_dimension", "")
+    cat   = r.get("category", "")
+    ptype = label_of_place_type(r.get("place_type"))
+    rating  = r.get("average_rating", "No Info")
+    reviews = r.get("user_ratings_total", 0)
+    link    = r.get("map_link", "")
 
     link_html = f"<br><b>Google:</b> <a href='{link}' target='_blank'>Ver en Google</a>" if link else ""
     return (
@@ -118,8 +198,7 @@ def make_popup_html(row: dict) -> str:
         f"<br><b>Categoría:</b> {cat}"
         f"<br><b>Tipo de lugar:</b> {ptype}"
         f"<br><b>Rating:</b> {rating} ({reviews} reviews)"
-        f"{link_html}"
-        f"</div>"
+        f"{link_html}</div>"
     )
 
 # =============  DATA  =============
@@ -128,7 +207,6 @@ def load_data(csv_path: str = "map_data.csv") -> pd.DataFrame:
     path = csv_path if os.path.exists(csv_path) else os.path.join("datain", "map_data.csv")
     df = pd.read_csv(path)
 
-    # columnas mínimas esperadas; si no existen, se crean para robustez
     for col, default in [
         ("municipio", "No Info"),
         ("corredor", "Macizo Colombiano"),
@@ -145,47 +223,35 @@ def load_data(csv_path: str = "map_data.csv") -> pd.DataFrame:
         if col not in df.columns:
             df[col] = default
 
-    # tipos
     df["average_rating"] = df["average_rating"].fillna("No Info").astype(str)
     df["user_ratings_total"] = pd.to_numeric(df["user_ratings_total"], errors="coerce").fillna(0).astype(int)
     df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce")
     df["longitude"] = pd.to_numeric(df["longitude"], errors="coerce")
 
-    # link a Google Maps (col flexible)
     link_cols = [c for c in ["place_link", "google_maps_url", "gmaps_url_canonical", "url"] if c in df.columns]
     df["map_link"] = df[link_cols[0]] if link_cols else ""
 
-    # normalizar categoría con strip para que coincida con el mapping
-    df["category"] = df["category"].astype(str).str.strip()
-
-    # descartamos filas sin coordenadas
     df = df.dropna(subset=["latitude", "longitude"])
     return df
 
 df = load_data()
 
-# =============  SIDEBAR — FILTROS  =============
+# =============  FILTROS SIDEBAR  =============
 st.sidebar.title("Filtros geográficos y de contenido")
-
-# 1) Corredor
 corr_all = sorted(df["corredor"].dropna().unique().tolist())
 sel_corr = st.sidebar.multiselect("Corredor", corr_all, default=[])
-
-# 2) Municipios (dependen del corredor)
 if sel_corr:
     mun_all = sorted(df[df["corredor"].isin(sel_corr)]["municipio"].dropna().unique().tolist())
 else:
     mun_all = sorted(df["municipio"].dropna().unique().tolist())
 sel_mun = st.sidebar.multiselect("Municipio", mun_all, default=(mun_all if sel_corr else []))
 
-# 3) Dimensión
 if sel_mun:
     dim_all = sorted(df[df["municipio"].isin(sel_mun)]["dimension"].dropna().unique().tolist())
 else:
     dim_all = sorted(df["dimension"].dropna().unique().tolist())
 sel_dim = st.sidebar.multiselect("Dimensión", dim_all, default=[])
 
-# 4) Sub-dimensión
 if sel_dim:
     tmp_sub = df[df["dimension"].isin(sel_dim)]
     if sel_mun: tmp_sub = tmp_sub[tmp_sub["municipio"].isin(sel_mun)]
@@ -194,12 +260,10 @@ else:
 subdim_all = sorted(tmp_sub["sub_dimension"].dropna().unique().tolist())
 sel_subdim = st.sidebar.multiselect("Sub-dimensión", subdim_all, default=[])
 
-# 5) Categoría
 tmp_cat = tmp_sub[tmp_sub["sub_dimension"].isin(sel_subdim)] if sel_subdim else tmp_sub
 cat_all = sorted(tmp_cat["category"].dropna().unique().tolist())
 sel_cat = st.sidebar.multiselect("Categoría", cat_all, default=[])
 
-# 6) Tipo de lugar
 tmp_ptype = tmp_cat[tmp_cat["category"].isin(sel_cat)] if sel_cat else tmp_cat
 ptype_all = sorted(tmp_ptype["place_type"].dropna().unique().tolist())
 sel_ptype = st.sidebar.multiselect("Tipo de lugar", ptype_all, default=[])
@@ -208,11 +272,12 @@ st.sidebar.markdown("---")
 show_markers = st.sidebar.checkbox("Mostrar marcadores", True)
 show_heatmap = st.sidebar.checkbox("Mostrar mapa de calor", False)
 
-# ======= MINI-LEYENDA EN SIDEBAR (por categoría) =======
-with st.sidebar.expander("Leyenda de categorías", expanded=False):
-    for cat, (ico, col) in CATEGORY_MARKERS.items():
+# Leyenda por place_type
+with st.sidebar.expander("Leyenda por tipo de lugar", expanded=False):
+    for key_norm, (ico, col) in sorted(PLACE_TYPE_MARKERS.items(), key=lambda x: label_of_place_type(x[0])):
+        lbl = label_of_place_type(key_norm)
         st.markdown(
-            f"""<div class="legend-row"><span class="legend-badge" style="background:{col};"></span>{cat}</div>""",
+            f"""<div class="legend-row"><span class="legend-badge" style="background:{col};"></span>{lbl}</div>""",
             unsafe_allow_html=True
         )
 
@@ -227,18 +292,16 @@ if sel_ptype:  fdf = fdf[fdf["place_type"].isin(sel_ptype)]
 
 ready_to_plot = bool(sel_dim)
 
-# =============  HEADER  =============
+# =============  CONTENIDO  =============
 st.title("Oferta turística — Macizo Colombiano (Cauca)")
 st.markdown(
     "Panel interactivo de **servicios y atractivos turísticos** identificados vía Google Maps, "
     "en municipios del **Macizo Colombiano (Cauca)**. "
-    "Jerarquía de filtros: **Dimensión → Sub-dimensión → Categoría → Tipo de lugar**. "
-    "Los marcadores del mapa son **únicos por categoría** (icono + color)."
+    "Jerarquía: **Dimensión → Sub-dimensión → Categoría → Tipo de lugar**. "
+    "Los marcadores son **únicos por tipo de lugar**."
 )
 
-# =============  CONTENIDO  =============
 if ready_to_plot and not fdf.empty:
-    # -------- Tabla --------
     st.markdown("### Resultados filtrados")
     show_cols = [
         "name","municipio","dimension","sub_dimension","category","place_type",
@@ -257,7 +320,7 @@ if ready_to_plot and not fdf.empty:
         mime="text/csv"
     )
 
-    # -------- Mapa --------
+    # ======= MAPA =======
     mlat, mlon = fdf["latitude"].mean(), fdf["longitude"].mean()
     fmap = folium.Map([mlat, mlon], zoom_start=9, control_scale=True)
     Fullscreen(position="topright", title="Pantalla completa", title_cancel="Salir").add_to(fmap)
@@ -267,10 +330,8 @@ if ready_to_plot and not fdf.empty:
 
     if show_markers:
         for _, r in fdf.iterrows():
-            cat = (r.get("category") or "").strip()
-            icon_name, color = marker_of(cat)
-
-            name = r.get("name", "Sin nombre")  # tooltip
+            icon_name, color = marker_of_place_type(r.get("place_type"))
+            name = r.get("name", "Sin nombre")
             html = make_popup_html(r)
 
             folium.Marker(
