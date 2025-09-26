@@ -292,43 +292,71 @@ def adaptive_df(n_docs:int):
     if n_docs>=50:  return 2,0.75
     return 1,1.0
 
-def build_freq(docs:list[str], topk:int=400)->dict:
+def build_freq(docs: list[str], topk: int = 400) -> dict:
+    """
+    Return UNI+BI frequencies as RAW COUNTS (not TF-IDF).
+    Attempts CountVectorizer first; falls back to manual counting.
+    """
+    # guardrails
+    docs = [d for d in docs if isinstance(d, str) and d.strip()]
+    if not docs:
+        return {}
+    token_total = sum(len(d.split()) for d in docs)
+    if token_total < 25:
+        return {}
+
+    def adaptive_df(n_docs: int):
+        if n_docs >= 200: return 3, 0.60
+        if n_docs >= 50:  return 2, 0.75
+        return 1, 1.0
+
     try:
-        from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
-        if not docs: return {}
-        tok_tot = sum(len(d.split()) for d in docs)
-        if tok_tot < 25: return {}
-        min_df, max_df = adaptive_df(len(docs))
+        from sklearn.feature_extraction.text import CountVectorizer
+        n_docs = len(docs)
+        min_df, max_df = adaptive_df(n_docs)
         vecs = [
-            TfidfVectorizer(ngram_range=(1,2), min_df=min_df, max_df=max_df, stop_words=list(BASE_STOP), norm=None),
-            TfidfVectorizer(ngram_range=(1,2), min_df=1, max_df=1.0, stop_words=list(BASE_STOP), norm=None),
-            TfidfVectorizer(ngram_range=(1,1), min_df=1, max_df=1.0, stop_words=list(BASE_STOP), norm=None),
-            CountVectorizer(ngram_range=(1,2), min_df=1, max_df=1.0, stop_words=list(BASE_STOP))
+            CountVectorizer(ngram_range=(1, 2), min_df=min_df, max_df=max_df,
+                            stop_words=list(BASE_STOP)),
+            CountVectorizer(ngram_range=(1, 2), min_df=1, max_df=1.0,
+                            stop_words=list(BASE_STOP)),
+            CountVectorizer(ngram_range=(1, 1), min_df=1, max_df=1.0,
+                            stop_words=list(BASE_STOP)),
         ]
         for v in vecs:
             try:
-                X = v.fit_transform(docs)
-                if X.shape[1]==0: continue
+                X = v.fit_transform(docs)        # sparse counts
+                if X.shape[1] == 0:
+                    continue
                 terms = v.get_feature_names_out()
-                weights = np.asarray(X.sum(axis=0)).ravel()
-                freq = dict(zip(terms, weights))
-                return dict(sorted(freq.items(), key=lambda x:x[1], reverse=True)[:topk])
+                counts = np.asarray(X.sum(axis=0)).ravel().astype(int)
+                freq = dict(zip(terms, counts))
+                return dict(sorted(freq.items(), key=lambda x: x[1], reverse=True)[:topk])
             except ValueError:
                 continue
     except Exception:
         pass
-    bag=Counter()
-    for d in docs:
-        t=[w for w in d.split() if w not in BASE_STOP]
-        bag.update(t); bag.update([" ".join(p) for p in zip(t,t[1:])])
-    return dict(sorted(bag.items(), key=lambda x:x[1], reverse=True)[:topk])
 
-def top_table(freq_map:dict, n=25)->pd.DataFrame:
-    if not freq_map: return pd.DataFrame(columns=["term","weight","share_%"])
-    s = pd.Series(freq_map).sort_values(ascending=False).head(n)
-    df = s.rename_axis("term").reset_index(name="weight")
-    df["share_%"] = (100*df["weight"]/df["weight"].sum()).round(2)
+    # Final fallback: manual bag-of-words counting (uni+bi)
+    from collections import Counter
+    bag = Counter()
+    for d in docs:
+        t = [w for w in d.split() if w and w not in BASE_STOP]
+        bag.update(t)
+        bag.update([" ".join(p) for p in zip(t, t[1:])])  # bigrams
+    return dict(sorted(bag.items(), key=lambda x: x[1], reverse=True)[:topk])
+
+
+def top_table(freq_map: dict, n: int = 25) -> pd.DataFrame:
+    """
+    Build top-N table with RAW COUNTS and share %.
+    """
+    if not freq_map:
+        return pd.DataFrame(columns=["term", "count", "share_%"])
+    s = pd.Series(freq_map, dtype="int64").sort_values(ascending=False).head(n)
+    df = s.rename_axis("term").reset_index(name="count")
+    df["share_%"] = (100 * df["count"] / df["count"].sum()).round(2)
     return df
+
 
 def draw_wordcloud(freq_map:dict, title:str):
     if not WORDCLOUD_AVAILABLE: return None
@@ -339,12 +367,24 @@ def draw_wordcloud(freq_map:dict, title:str):
     fig = plt.figure(figsize=(12,7), dpi=140); plt.imshow(wc, interpolation="bilinear")
     plt.axis("off"); plt.title(title, pad=8); return fig
 
-def draw_bar_chart(freq_map:dict, title:str, topn:int=40):
-    if not freq_map: st.info(f"{title}: sin términos para graficar."); return
-    df = pd.Series(freq_map).sort_values(ascending=False).head(topn).rename_axis("term").reset_index(name="weight")
-    fig = plt.figure(figsize=(10,8), dpi=140); plt.barh(df["term"][::-1], df["weight"][::-1])
-    plt.title(title); plt.xlabel("Peso"); plt.tight_layout(); st.pyplot(fig, use_container_width=True)
-
+def draw_bar_chart(freq_map: dict, title: str, topn: int = 40):
+    """
+    Bar chart now labels the metric as 'count'.
+    """
+    if not freq_map:
+        st.info(f"{title}: sin términos para graficar.")
+        return
+    df = (pd.Series(freq_map, dtype="int64")
+          .sort_values(ascending=False)
+          .head(topn)
+          .rename_axis("term")
+          .reset_index(name="count"))
+    fig = plt.figure(figsize=(10, 8), dpi=140)
+    plt.barh(df["term"][::-1], df["count"][::-1])
+    plt.title(title); plt.xlabel("Frecuencia (conteo)")
+    plt.tight_layout()
+    st.pyplot(fig, use_container_width=True)
+    
 # ===== Content =====
 st.title("Oferta turística — Macizo Colombiano (Cauca)")
 st.markdown("Panel interactivo de **servicios y atractivos turísticos** identificados vía Google Maps, en municipios del **Macizo Colombiano (Cauca)**.")
