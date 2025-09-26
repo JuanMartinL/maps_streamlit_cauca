@@ -1,10 +1,8 @@
 # streamlit_app.py
 # --------------------------------------------------
 # Oferta Turística — Macizo Colombiano (Cauca)
-# Tab 1: Mapa (igual que antes)
-# Tab 2: Text mining (UN solo WordCloud + tablas uni/bi)
-# Data: map_data.csv  +  map_data_review.csv
-# Resiliente: si falta 'wordcloud'/'sklearn' -> barras (matplotlib)
+# Tab 1: Mapa
+# Tab 2: Text mining 
 # --------------------------------------------------
 
 import streamlit as st
@@ -41,10 +39,15 @@ input[type="checkbox"]+div svg{color:#9c3675!important;stroke:#fff!important;fil
 </style>
 """, unsafe_allow_html=True)
 
-# =============  LOGOS (sidebar)  =============
+# ======== LOGOS (sidebar) ========
 def _load_b64(path: str):
     try:
-        img = Image.open(path); buf = BytesIO(); img.save(buf, format="PNG")
+        from PIL import Image
+        from io import BytesIO
+        import base64
+        img = Image.open(path)
+        buf = BytesIO()
+        img.save(buf, format="PNG")
         return base64.b64encode(buf.getvalue()).decode()
     except Exception:
         return ""
@@ -53,8 +56,7 @@ with st.sidebar:
     st.markdown(
         """
         <style>
-            .logo img{margin:0;padding:0;border-radius:0;box-shadow:none;}
-            .brand img{display:block;margin:8px auto 14px auto;}
+            .brand img{display:block;margin:6px auto 14px auto;}
             .powered{display:flex;justify-content:center;align-items:center;gap:8px;font-size:11px;color:grey;}
             .powered img{height:45px;width:45px;border-radius:50%;object-fit:cover;}
         </style>
@@ -62,25 +64,23 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-    # Logo principal (Fontur)
-    st.markdown('<div class="logo">', unsafe_allow_html=True)
-    if os.path.exists("assets/logo_mincit_fontur.jpeg"):
-        st.image("assets/logo_mincit_fontur.jpeg", use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # Logo Fundaculta | Beta Group
-    if os.path.exists("assets/logo_beta_fundaculta.png"):
+    # ÚNICA imagen compuesta de logos
+    if os.path.exists("assets/logos.png"):
         st.markdown('<div class="brand">', unsafe_allow_html=True)
-        st.image("assets/logo_beta_fundaculta.png", use_container_width=True)
+        st.image("assets/logos.png", use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
     # Powered by DataD
     b64 = _load_b64("assets/datad_logo.jpeg")
     if b64:
         st.markdown(
-            f"""<div class="powered"><img src="data:image/png;base64,{b64}"/><span>Powered by DataD</span></div>""",
+            f"""<div class="powered">
+                    <img src="data:image/png;base64,{b64}"/>
+                    <span>Powered by DataD</span>
+                </div>""",
             unsafe_allow_html=True,
         )
+
 
 # =============  HELPERS  =============
 def _norm(s: str) -> str:
