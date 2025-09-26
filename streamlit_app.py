@@ -50,16 +50,35 @@ def _load_b64(path: str):
         return ""
 
 with st.sidebar:
+    st.markdown(
+        """
+        <style>
+            .logo img{margin:0;padding:0;border-radius:0;box-shadow:none;}
+            .brand img{display:block;margin:8px auto 14px auto;}
+            .powered{display:flex;justify-content:center;align-items:center;gap:8px;font-size:11px;color:grey;}
+            .powered img{height:45px;width:45px;border-radius:50%;object-fit:cover;}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Logo principal (Fontur)
     st.markdown('<div class="logo">', unsafe_allow_html=True)
     if os.path.exists("assets/logo_mincit_fontur.jpeg"):
         st.image("assets/logo_mincit_fontur.jpeg", use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
+
+    # Logo Fundaculta | Beta Group
+    if os.path.exists("assets/logo_beta_fundaculta.png"):
+        st.markdown('<div class="brand">', unsafe_allow_html=True)
+        st.image("assets/logo_beta_fundaculta.png", use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # Powered by DataD
     b64 = _load_b64("assets/datad_logo.jpeg")
     if b64:
         st.markdown(
-            f"""<div style="display:flex;align-items:center;gap:8px;font-size:11px;color:grey;">
-                <img src="data:image/png;base64,{b64}" style="height:45px;width:45px;border-radius:50%;object-fit:cover;"/>
-                <span>Powered by DataD</span></div>""",
+            f"""<div class="powered"><img src="data:image/png;base64,{b64}"/><span>Powered by DataD</span></div>""",
             unsafe_allow_html=True,
         )
 
@@ -177,10 +196,12 @@ def load_map() -> pd.DataFrame:
     return df.dropna(subset=["latitude","longitude"])
 
 @st.cache_data
+@st.cache_data
 def load_reviews() -> pd.DataFrame:
     df = _read_csv_any("map_data_review.csv")
     if df.empty: return df
-    # rename schema
+
+    # Normaliza nombres
     rnm = {}
     for c in ["text_es","texto_es","review_text_es","review_text","text","comentario"]:
         if c in df.columns: rnm[c]="text_es"; break
@@ -189,13 +210,20 @@ def load_reviews() -> pd.DataFrame:
     for c in ["category","Category","categoria","cat"]:
         if c in df.columns: rnm[c]="category"; break
     df = df.rename(columns=rnm)
+
+    # Columnas mínimas
     if "text_es" not in df.columns: df["text_es"] = ""
     if "municipio" not in df.columns: df["municipio"] = "No Info"
     if "category"  not in df.columns: df["category"]  = "No Info"
+
+    # >>> CRÍTICO: evita 'nan' como texto
+    df["text_es"]  = df["text_es"].astype("string").fillna("")
+
+    # Normalizados para join con mapa
     df["mun_norm"] = df["municipio"].map(_norm)
     df["cat_norm"] = df["category"].map(_norm)
-    df["text_es"]  = df["text_es"].astype(str)
     return df
+
 
 df_map = load_map()
 df_reviews = load_reviews()
@@ -258,7 +286,8 @@ SPANISH_STOP = {
     "otros","para","pero","poco","por","porque","que","quien","quién","quienes","se","sin","sobre",
     "su","sus","te","tiene","tienen","tu","tus","un","una","uno","unos","y","ya"
 }
-DOMAIN_STOP = {"lugar","sitio"}
+# --- STOPWORDS (agrega nan/none/null) ---
+DOMAIN_STOP = {"lugar", "sitio", "nan", "none", "null"}
 BASE_STOP = SPANISH_STOP | DOMAIN_STOP
 
 def normalize_spanish(text: str) -> str:
@@ -269,12 +298,17 @@ def normalize_spanish(text: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 def preprocess_docs(series: pd.Series) -> list[str]:
-    out=[]
+    out = []
+    # segunda malla de seguridad contra 'nan'
     for raw in series.fillna("").astype(str):
+        if raw.strip().lower() in {"nan", "none", "null"}:
+            out.append("")
+            continue
         s = normalize_spanish(raw)
         toks = [t for t in s.split() if len(t) > 2 and t not in BASE_STOP]
         out.append(" ".join(toks))
     return out
+
 
 def adaptive_df(n_docs:int):
     if n_docs>=200: return 3,0.60
