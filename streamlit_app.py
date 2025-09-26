@@ -3,7 +3,8 @@
 # Oferta Turística — Macizo Colombiano (Cauca)
 # Tab 1: Mapa (con filtros)
 # Tab 2: Text mining (WordCloud + conteo uni/bi)
-# Resiliente: si no existe 'wordcloud', cae a barras con Matplotlib
+# Data: map_data.csv  +  map_data_review.csv
+# Resiliente: si no hay 'wordcloud' / 'sklearn' -> barras (matplotlib)
 # --------------------------------------------------
 
 import streamlit as st
@@ -20,9 +21,9 @@ import unicodedata
 import re
 from pathlib import Path
 from collections import Counter
-
-# Visual stack (matplotlib siempre; wordcloud opcional)
 import matplotlib.pyplot as plt
+
+# --- Optional: WordCloud (fallback to bars if not installed)
 try:
     from wordcloud import WordCloud
     WORDCLOUD_AVAILABLE = True
@@ -83,13 +84,14 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
 
-# =============  MARCADORES POR PLACE_TYPE  =============
+# =============  HELPERS  =============
 def _norm(s: str) -> str:
     s = str(s or "").strip().lower()
     s = unicodedata.normalize("NFKD", s)
     s = "".join(c for c in s if not unicodedata.combining(c))
     return " ".join(s.split())
 
+# =============  MARCADORES POR PLACE_TYPE  =============
 PLACE_TYPE_LABELS = [
     'Hoteles', 'Posadas rurales', 'Camping', 'Glamping',
     'Viviendas turísticas', 'Fincas turísticas', 'Restaurantes',
@@ -197,7 +199,6 @@ def make_popup_html(r: dict) -> str:
     rating  = r.get("average_rating", "No Info")
     reviews = r.get("user_ratings_total", 0)
     link    = r.get("map_link", "")
-
     link_html = f"<br><b>Google:</b> <a href='{link}' target='_blank'>Ver en Google</a>" if link else ""
     return (
         f"<div style='font-size:13px'>"
@@ -211,12 +212,21 @@ def make_popup_html(r: dict) -> str:
         f"{link_html}</div>"
     )
 
-# =============  DATA  =============
+# =============  DATA LOADERS  =============
 @st.cache_data
-def load_data(csv_path: str = "map_data.csv") -> pd.DataFrame:
-    path = csv_path if os.path.exists(csv_path) else os.path.join("datain", "map_data.csv")
-    df = pd.read_csv(path)
+def _read_csv_any(path_main: str, path_alt: str):
+    if os.path.exists(path_main):
+        return pd.read_csv(path_main)
+    alt = os.path.join("datain", path_alt) if not os.path.isabs(path_alt) else path_alt
+    if os.path.exists(alt):
+        return pd.read_csv(alt)
+    return pd.DataFrame()
 
+@st.cache_data
+def load_map() -> pd.DataFrame:
+    df = _read_csv_any("map_data.csv", "map_data.csv")
+    if df.empty:
+        return df
     for col, default in [
         ("municipio", "No Info"),
         ("corredor", "Macizo Colombiano"),
@@ -229,45 +239,76 @@ def load_data(csv_path: str = "map_data.csv") -> pd.DataFrame:
         ("user_ratings_total", 0),
         ("latitude", None),
         ("longitude", None),
-        ("text_es", "")     # columna de texto esperada
+        ("map_link", "")
     ]:
         if col not in df.columns:
             df[col] = default
-
     df["average_rating"] = df["average_rating"].fillna("No Info").astype(str)
     df["user_ratings_total"] = pd.to_numeric(df["user_ratings_total"], errors="coerce").fillna(0).astype(int)
-    df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce")
+    df["latitude"]  = pd.to_numeric(df["latitude"], errors="coerce")
     df["longitude"] = pd.to_numeric(df["longitude"], errors="coerce")
-
-    link_cols = [c for c in ["place_link", "google_maps_url", "gmaps_url_canonical", "url"] if c in df.columns]
-    df["map_link"] = df[link_cols[0]] if link_cols else ""
-
+    # Fallback map link
+    if "map_link" not in df.columns:
+        link_cols = [c for c in ["place_link", "google_maps_url", "gmaps_url_canonical", "url"] if c in df.columns]
+        df["map_link"] = df[link_cols[0]] if link_cols else ""
     df = df.dropna(subset=["latitude", "longitude"])
     return df
 
-df = load_data()
+@st.cache_data
+def load_reviews() -> pd.DataFrame:
+    """
+    Lee map_data_review.csv (o ./datain/map_data_review.csv).
+    Requiere: text_es, municipio, category (se renombran si vienen con otros nombres).
+    """
+    df = _read_csv_any("map_data_review.csv", "map_data_review.csv")
+    if df.empty:
+        return df
 
-# =============  FILTROS SIDEBAR  =============
+    # Normaliza nombres de columnas
+    rename_map = {}
+    for c in ["text_es", "texto_es", "review_text_es", "review_text", "text", "comentario"]:
+        if c in df.columns: rename_map[c] = "text_es"; break
+    for c in ["municipio", "Municipio", "muni", "city", "town"]:
+        if c in df.columns: rename_map[c] = "municipio"; break
+    for c in ["category", "Category", "categoria", "cat"]:
+        if c in df.columns: rename_map[c] = "category"; break
+    df = df.rename(columns=rename_map)
+
+    # Crea faltantes
+    if "text_es" not in df.columns: df["text_es"] = ""
+    if "municipio" not in df.columns: df["municipio"] = "No Info"
+    if "category" not in df.columns:  df["category"] = "No Info"
+
+    # Tipos
+    df["text_es"] = df["text_es"].astype(str)
+    df["municipio"] = df["municipio"].astype(str)
+    df["category"]  = df["category"].astype(str)
+    return df
+
+df_map = load_map()
+df_reviews = load_reviews()
+
+# =============  FILTROS SIDEBAR (como estaban)  =============
 st.sidebar.title("Filtros geográficos y de contenido")
-corr_all = sorted(df["corredor"].dropna().unique().tolist())
+corr_all = sorted(df_map["corredor"].dropna().unique().tolist())
 sel_corr = st.sidebar.multiselect("Corredor", corr_all, default=[])
 if sel_corr:
-    mun_all = sorted(df[df["corredor"].isin(sel_corr)]["municipio"].dropna().unique().tolist())
+    mun_all = sorted(df_map[df_map["corredor"].isin(sel_corr)]["municipio"].dropna().unique().tolist())
 else:
-    mun_all = sorted(df["municipio"].dropna().unique().tolist())
+    mun_all = sorted(df_map["municipio"].dropna().unique().tolist())
 sel_mun = st.sidebar.multiselect("Municipio", mun_all, default=(mun_all if sel_corr else []))
 
 if sel_mun:
-    dim_all = sorted(df[df["municipio"].isin(sel_mun)]["dimension"].dropna().unique().tolist())
+    dim_all = sorted(df_map[df_map["municipio"].isin(sel_mun)]["dimension"].dropna().unique().tolist())
 else:
-    dim_all = sorted(df["dimension"].dropna().unique().tolist())
+    dim_all = sorted(df_map["dimension"].dropna().unique().tolist())
 sel_dim = st.sidebar.multiselect("Dimensión", dim_all, default=[])
 
 if sel_dim:
-    tmp_sub = df[df["dimension"].isin(sel_dim)]
+    tmp_sub = df_map[df_map["dimension"].isin(sel_dim)]
     if sel_mun: tmp_sub = tmp_sub[tmp_sub["municipio"].isin(sel_mun)]
 else:
-    tmp_sub = df[df["municipio"].isin(sel_mun)] if sel_mun else df
+    tmp_sub = df_map[df_map["municipio"].isin(sel_mun)] if sel_mun else df_map
 subdim_all = sorted(tmp_sub["sub_dimension"].dropna().unique().tolist())
 sel_subdim = st.sidebar.multiselect("Sub-dimensión", subdim_all, default=[])
 
@@ -291,22 +332,19 @@ with st.sidebar.expander("Leyenda por tipo de lugar", expanded=False):
             unsafe_allow_html=True
         )
 
-# =============  FILTRADO  =============
-fdf = df.copy()
+# =============  FILTRADO MAPA  =============
+fdf = df_map.copy()
 if sel_corr:   fdf = fdf[fdf["corredor"].isin(sel_corr)]
 if sel_mun:    fdf = fdf[fdf["municipio"].isin(sel_mun)]
 if sel_dim:    fdf = fdf[fdf["dimension"].isin(sel_dim)]
 if sel_subdim: fdf = fdf[fdf["sub_dimension"].isin(sel_subdim)]
 if sel_cat:    fdf = fdf[fdf["category"].isin(sel_cat)]
 if sel_ptype:  fdf = fdf[fdf["place_type"].isin(sel_ptype)]
-
-ready_to_plot = bool(sel_dim)
+ready_map = bool(sel_dim)
 
 # ==========================================================
 # =============  NLP UTILITIES (Text mining)  ==============
 # ==========================================================
-TEXT_COL_CANDIDATES = ["text_es", "review_text_es", "review_text", "text"]
-
 SPANISH_STOP = {
     "a","acá","ahora","al","algo","algunas","algunos","allí","allá","ante","antes","aquel","aquella",
     "aquellas","aquellos","aqui","aquí","así","aunque","cada","como","con","contra","cual","cuales",
@@ -317,7 +355,7 @@ SPANISH_STOP = {
     "otros","para","pero","poco","por","porque","que","quien","quién","quienes","se","sin","sobre",
     "su","sus","te","tiene","tienen","tu","tus","un","una","uno","unos","y","ya"
 }
-DOMAIN_STOP = {"lugar", "sitio"}  # ajustable si ensucia la nube
+DOMAIN_STOP = {"lugar", "sitio"}
 BASE_STOP = SPANISH_STOP | DOMAIN_STOP
 
 def normalize_spanish(text: str) -> str:
@@ -341,16 +379,13 @@ def adaptive_df(n_docs: int):
     return 1, 1.0
 
 def build_freq(docs: list[str], topk: int = 400) -> dict:
-    # intenta TF-IDF; si no hay vocabulario, cae a conteo
+    # best-effort TF-IDF then count; if sklearn no está, cae al conteo manual
     try:
         from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
         if not docs: return {}
         token_total = sum(len(d.split()) for d in docs)
         if token_total < 25: return {}
-
-        n_docs = len(docs)
-        min_df, max_df = adaptive_df(n_docs)
-
+        n_docs = len(docs); min_df, max_df = adaptive_df(n_docs)
         attempts = [
             TfidfVectorizer(ngram_range=(1,2), min_df=min_df, max_df=max_df,
                             stop_words=list(BASE_STOP), norm=None),
@@ -371,10 +406,8 @@ def build_freq(docs: list[str], topk: int = 400) -> dict:
                 return dict(sorted(freq.items(), key=lambda x: x[1], reverse=True)[:topk])
             except ValueError:
                 continue
-
     except Exception:
         pass
-
     # último recurso: conteo manual
     bag = Counter()
     for d in docs:
@@ -392,7 +425,6 @@ def top_table(freq_map: dict, n=25) -> pd.DataFrame:
     return df
 
 def draw_wordcloud(freq_map: dict, title: str):
-    # Si no hay paquete, devolvemos None y el caller usa barras
     if not WORDCLOUD_AVAILABLE:
         return None
     wc = WordCloud(
@@ -412,26 +444,22 @@ def draw_bar_chart(freq_map: dict, title: str, topn: int = 40):
         st.info(f"{title}: sin términos para graficar.")
         return
     df = (pd.Series(freq_map).sort_values(ascending=False)
-            .head(topn).rename_axis("term").reset_index(name="weight"))
+          .head(topn).rename_axis("term").reset_index(name="weight"))
     fig = plt.figure(figsize=(10, 8), dpi=140)
     plt.barh(df["term"][::-1], df["weight"][::-1])
-    plt.title(title)
-    plt.xlabel("Peso")
-    plt.tight_layout()
+    plt.title(title); plt.xlabel("Peso"); plt.tight_layout()
     st.pyplot(fig, use_container_width=True)
 
-# =============  CONTENIDO  =============
+# =============  CONTENT HEADER  =============
 st.title("Oferta turística — Macizo Colombiano (Cauca)")
-st.markdown(
-    "Panel interactivo de **servicios y atractivos turísticos** identificados vía Google Maps, "
-    "en municipios del **Macizo Colombiano (Cauca)**."
-)
+st.markdown("Panel interactivo de **servicios y atractivos turísticos** identificados vía Google Maps, "
+            "en municipios del **Macizo Colombiano (Cauca)**.")
 
 tab_map, tab_text = st.tabs(["Mapa", "Text mining"])
 
 # ==================== TAB 1: MAPA ====================
 with tab_map:
-    if ready_to_plot and not fdf.empty:
+    if ready_map and not fdf.empty:
         st.markdown("### Resultados filtrados")
         show_cols = [
             "name","municipio","dimension","sub_dimension","category","place_type",
@@ -472,7 +500,7 @@ with tab_map:
         folium.LayerControl(collapsed=False).add_to(fmap)
         st_folium(fmap, height=650, use_container_width=True)
 
-    elif ready_to_plot and fdf.empty:
+    elif ready_map and fdf.empty:
         st.warning("No se encontraron resultados con los filtros seleccionados. Ajuste la segmentación.")
     else:
         st.info("Para visualizar resultados, seleccione al menos una **Dimensión**.")
@@ -480,92 +508,99 @@ with tab_map:
 # ==================== TAB 2: TEXT MINING ====================
 with tab_text:
     st.subheader("Insights de texto: WordClouds + conteo de términos")
-    text_col = next((c for c in TEXT_COL_CANDIDATES if c in fdf.columns), None)
 
-    if not ready_to_plot:
-        st.info("Para activar el análisis de texto, seleccione al menos una **Dimensión** en el panel de filtros.")
-    elif text_col is None:
-        st.warning("No se encontró una columna de texto. Agregue `text_es` (o actualice TEXT_COL_CANDIDATES).")
-    elif fdf[text_col].fillna("").str.strip().eq("").all():
-        st.warning("No hay texto disponible en los registros filtrados.")
+    if df_reviews.empty:
+        st.warning("No se encontró `map_data_review.csv`. Colóquelo en la raíz o en `./datain/`.")
     else:
-        topk = st.slider("Top términos para tablas", min_value=10, max_value=100, value=25, step=5)
-        min_docs = st.slider("Mínimo de registros por corte", min_value=5, max_value=50, value=10, step=5)
+        # Acople con filtros actuales (Municipio/Categoría)
+        rdf = df_reviews.copy()
+        if sel_mun: rdf = rdf[rdf["municipio"].isin(sel_mun)]
+        if sel_cat: rdf = rdf[rdf["category"].isin(sel_cat)]
 
-        working = fdf.copy()
-        working["doc_clean"] = preprocess_docs(working[text_col])
+        if rdf["text_es"].fillna("").str.strip().eq("").all():
+            st.warning("`map_data_review.csv` no tiene texto en la columna `text_es` para los filtros activos.")
+        else:
+            topk = st.slider("Top términos para tablas", min_value=10, max_value=100, value=25, step=5)
+            min_docs = st.slider("Mínimo de registros por corte", min_value=5, max_value=50, value=10, step=5)
 
-        def render_block(title, docs):
-            docs = [d for d in docs if isinstance(d, str) and d]
-            if len(docs) < min_docs:
-                st.info(f"{title}: muestra insuficiente (N={len(docs)}).")
-                return
-            freq = build_freq(docs, topk=400)
-            if not freq:
-                st.info(f"{title}: sin vocabulario útil tras limpieza.")
-                return
+            working = rdf.copy()
+            working["doc_clean"] = preprocess_docs(working["text_es"])
 
-            col1, col2 = st.columns([3, 2])
-            with col1:
-                fig = draw_wordcloud(freq, f"{title} — Unigramas + Bigramas")
-                if fig is not None:
-                    st.pyplot(fig, use_container_width=True)
-                else:
-                    st.info("WordCloud no disponible en el entorno; mostrando ranking de términos.")
-                    draw_bar_chart(freq, f"{title} — Ranking (uni+bi)")
+            def render_block(title, docs, key_prefix="k"):
+                docs = [d for d in docs if isinstance(d, str) and d]
+                if len(docs) < min_docs:
+                    st.info(f"{title}: muestra insuficiente (N={len(docs)}).")
+                    return
+                freq = build_freq(docs, topk=400)
+                if not freq:
+                    st.info(f"{title}: sin vocabulario útil tras limpieza.")
+                    return
 
-                bi = {k:v for k,v in freq.items() if " " in k}
-                if len(bi) >= 10:
-                    fig2 = draw_wordcloud(bi, f"{title} — Solo Bigramas")
-                    if fig2 is not None:
-                        st.pyplot(fig2, use_container_width=True)
+                col1, col2 = st.columns([3, 2])
+                with col1:
+                    fig = draw_wordcloud(freq, f"{title} — Unigramas + Bigramas")
+                    if fig is not None:
+                        st.pyplot(fig, use_container_width=True)
                     else:
-                        draw_bar_chart(bi, f"{title} — Ranking de bigramas")
+                        st.info("WordCloud no disponible en el entorno; mostrando ranking de términos.")
+                        draw_bar_chart(freq, f"{title} — Ranking (uni+bi)")
 
-            with col2:
-                uni = {k:v for k,v in freq.items() if " " not in k}
-                bi  = {k:v for k,v in freq.items() if " " in k}
-                df_uni = top_table(uni, n=topk)
-                df_bi  = top_table(bi,  n=topk)
+                    bi = {k:v for k,v in freq.items() if " " in k}
+                    if len(bi) >= 10:
+                        fig2 = draw_wordcloud(bi, f"{title} — Solo Bigramas")
+                        if fig2 is not None:
+                            st.pyplot(fig2, use_container_width=True)
+                        else:
+                            draw_bar_chart(bi, f"{title} — Ranking de bigramas")
 
-                st.markdown("**Top Unigramas**")
-                st.dataframe(df_uni, use_container_width=True, height=270)
-                st.download_button(
-                    "Descargar unigramas (CSV)",
-                    data=df_uni.to_csv(index=False),
-                    file_name=f"{re.sub(r'\\W+','_',title.lower())}_top_unigrams.csv",
-                    mime="text/csv"
-                )
-                st.markdown("---")
-                st.markdown("**Top Bigramas**")
-                st.dataframe(df_bi, use_container_width=True, height=270)
-                st.download_button(
-                    "Descargar bigramas (CSV)",
-                    data=df_bi.to_csv(index=False),
-                    file_name=f"{re.sub(r'\\W+','_',title.lower())}_top_bigrams.csv",
-                    mime="text/csv"
-                )
+                with col2:
+                    uni = {k:v for k,v in freq.items() if " " not in k}
+                    bi  = {k:v for k,v in freq.items() if " " in k}
+                    df_uni = top_table(uni, n=topk)
+                    df_bi  = top_table(bi,  n=topk)
 
-        # 1) General
-        st.markdown("### 1) General — todos los municipios y categorías")
-        render_block("General (todos los municipios y categorías)", working["doc_clean"].tolist())
+                    st.markdown("**Top Unigramas**")
+                    st.dataframe(df_uni, use_container_width=True, height=270)
+                    st.download_button(
+                        "Descargar unigramas (CSV)",
+                        data=df_uni.to_csv(index=False),
+                        file_name=f"{re.sub(r'\\W+','_',title.lower())}_top_unigrams.csv",
+                        mime="text/csv",
+                        key=f"{key_prefix}_dl_uni"
+                    )
+                    st.markdown("---")
+                    st.markdown("**Top Bigramas**")
+                    st.dataframe(df_bi, use_container_width=True, height=270)
+                    st.download_button(
+                        "Descargar bigramas (CSV)",
+                        data=df_bi.to_csv(index=False),
+                        file_name=f"{re.sub(r'\\W+','_',title.lower())}_top_bigrams.csv",
+                        mime="text/csv",
+                        key=f"{key_prefix}_dl_bi"
+                    )
 
-        # 2) Por municipio
-        st.markdown("### 2) Desagregado por municipio")
-        for muni, g in working.groupby("municipio", dropna=False):
-            muni_label = "Sin municipio" if pd.isna(muni) else str(muni)
-            with st.expander(f"Municipio: {muni_label}  —  N={len(g)}", expanded=False):
-                render_block(f"Municipio: {muni_label}", g["doc_clean"].tolist())
+            # 1) General
+            st.markdown("### 1) General — todos los municipios y categorías (según filtros aplicados)")
+            render_block("General (reviews)", working["doc_clean"].tolist(), key_prefix="gen")
 
-        # 3) Por municipio y categoría (cap a 60 cortes para performance)
-        st.markdown("### 3) Desagregado por municipio y categoría")
-        groups = (
-            working.groupby(["municipio","category"], dropna=False)
-                   .size().sort_values(ascending=False).head(60).index.tolist()
-        )
-        for (muni, cat) in groups:
-            g = working[(working["municipio"].eq(muni)) & (working["category"].eq(cat))]
-            muni_label = "Sin municipio" if pd.isna(muni) else str(muni)
-            cat_label  = "Sin categoría" if pd.isna(cat) else str(cat)
-            with st.expander(f"{muni_label}  |  {cat_label}  —  N={len(g)}", expanded=False):
-                render_block(f"Municipio: {muni_label} | Categoría: {cat_label}", g["doc_clean"].tolist())
+            # 2) Por municipio
+            st.markdown("### 2) Desagregado por municipio")
+            for i, (muni, g) in enumerate(working.groupby("municipio", dropna=False), start=1):
+                muni_label = "Sin municipio" if pd.isna(muni) else str(muni)
+                with st.expander(f"Municipio: {muni_label}  —  N={len(g)}", expanded=False):
+                    render_block(f"Municipio: {muni_label}", g["doc_clean"].tolist(), key_prefix=f"m_{i}")
+
+            # 3) Por municipio y categoría (cap para performance)
+            st.markdown("### 3) Desagregado por municipio y categoría")
+            groups = (
+                working.groupby(["municipio","category"], dropna=False)
+                       .size().sort_values(ascending=False).head(60).index.tolist()
+            )
+            for j, (muni, cat) in enumerate(groups, start=1):
+                g = working[(working["municipio"].eq(muni)) & (working["category"].eq(cat))]
+                muni_label = "Sin municipio" if pd.isna(muni) else str(muni)
+                cat_label  = "Sin categoría" if pd.isna(cat) else str(cat)
+                with st.expander(f"{muni_label}  |  {cat_label}  —  N={len(g)}", expanded=False):
+                    render_block(f"Municipio: {muni_label} | Categoría: {cat_label}",
+                                 g["doc_clean"].tolist(),
+                                 key_prefix=f"mc_{j}")
