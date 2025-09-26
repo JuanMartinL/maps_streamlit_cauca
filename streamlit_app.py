@@ -347,14 +347,12 @@ def build_freq(docs: list[str], topk: int = 400) -> dict:
 
 
 def top_table(freq_map: dict, n: int = 25) -> pd.DataFrame:
-    """
-    Build top-N table with RAW COUNTS and share %.
-    """
+    """Top-N con CONTEOS crudos + % de participación, con headers en español."""
     if not freq_map:
-        return pd.DataFrame(columns=["term", "count", "share_%"])
+        return pd.DataFrame(columns=["Palabra", "Conteo", "% Participación"])
     s = pd.Series(freq_map, dtype="int64").sort_values(ascending=False).head(n)
-    df = s.rename_axis("term").reset_index(name="count")
-    df["share_%"] = (100 * df["count"] / df["count"].sum()).round(2)
+    df = s.rename_axis("Palabra").reset_index(name="Conteo")
+    df["% Participación"] = (100 * df["Conteo"] / df["Conteo"].sum()).round(2)
     return df
 
 
@@ -389,7 +387,7 @@ def draw_bar_chart(freq_map: dict, title: str, topn: int = 40):
 st.title("Oferta turística — Macizo Colombiano (Cauca)")
 st.markdown("Panel interactivo de **servicios y atractivos turísticos** identificados vía Google Maps, en municipios del **Macizo Colombiano (Cauca)**.")
 
-tab_map, tab_text = st.tabs(["Mapa", "Text mining"])
+tab_map, tab_text = st.tabs(["Mapa", "Análisis de reseñas"])
 
 # ---- TAB 1: MAPA ----
 with tab_map:
@@ -429,7 +427,8 @@ with tab_map:
 
 # ---- TAB 2: TEXT MINING | Tablas ARRIBA + WordCloud ABAJO ----
 with tab_text:
-    st.subheader("Text mining — tablas de términos y WordCloud (según filtros activos)")
+    st.subheader("Análisis de reseñas")
+    st.markdown("Tablas de palabras y nubes de palabras, de acuerdo con los **filtros activos**.")
 
     if df_reviews.empty:
         st.warning("No se encontró `map_data_review.csv`. Colóquelo en la raíz o en `./datain/`.")
