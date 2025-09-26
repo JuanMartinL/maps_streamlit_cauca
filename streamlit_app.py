@@ -433,60 +433,71 @@ with tab_text:
     if df_reviews.empty:
         st.warning("No se encontró `map_data_review.csv`. Colóquelo en la raíz o en `./datain/`.")
     else:
-        # Subconjunto alineado a filtros activos (muni/cat del mapa filtrado)
-        if ready_map:
-            muni_set = set(fdf["mun_norm"].unique())
-            cat_set  = set(fdf["cat_norm"].unique())
-        else:
-            muni_set = set(df_map["mun_norm"].unique())
-            cat_set  = set(df_map["cat_norm"].unique())
+        # ========= KEY CHANGE: use current fdf (already reflects ALL sidebar filters)
+        if fdf.empty:
+            st.warning("No hay resultados en el mapa con los filtros actuales; no se puede construir el análisis de reseñas.")
+            st.stop()
+
+        # 1) Build current keys from fdf and inner-join reviews on normalized municipio+categoría
+        keys = (
+            fdf[["mun_norm", "cat_norm"]]
+            .fillna("__nc__")                # sentinel for missing category
+            .drop_duplicates()
+        )
 
         rdf = df_reviews.copy()
-        if muni_set: rdf = rdf[rdf["mun_norm"].isin(muni_set)]
-        if cat_set:  rdf = rdf[rdf["cat_norm"].isin(cat_set)]
+        rdf["cat_norm"] = rdf["cat_norm"].fillna("__nc__")
 
+        # Inner join -> only reviews that match current filtered muni+category
+        rdf = rdf.merge(keys, on=["mun_norm", "cat_norm"], how="inner")
+
+        # Optional: if you want municipality-only behavior when no category is present in reviews:
+        # if rdf.empty:
+        #     rdf = df_reviews[df_reviews["mun_norm"].isin(keys["mun_norm"])]
+
+        # 2) Guardrails
         if rdf.empty or rdf["text_es"].fillna("").str.strip().eq("").all():
             st.warning("No hay texto disponible en los registros que cumplen los filtros.")
+            st.stop()
+
+        # 3) Slider + preprocessing
+        topk = st.slider("Top términos para tablas", 10, 100, 25, 5, key="topk_tables")
+        docs = preprocess_docs(rdf["text_es"])
+        n_docs = sum(1 for d in docs if d)
+        token_total = sum(len(d.split()) for d in docs)
+
+        if n_docs < 5 or token_total < 25:
+            st.info(f"Muestra insuficiente para análisis (docs={n_docs}, tokens={token_total}). Amplíe filtros.")
+            st.stop()
+
+        # 4) Build RAW COUNT frequencies (uni+bi) and render
+        freq = build_freq(docs, topk=400)
+
+        # ----- Tables first -----
+        uni = {k: v for k, v in freq.items() if " " not in k}
+        bi  = {k: v for k, v in freq.items() if " " in k}
+        df_uni = top_table(uni, n=topk)    # returns columns: Palabra, Conteo, % Participación
+        df_bi  = top_table(bi,  n=topk)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**Top Unigramas**")
+            st.dataframe(df_uni, use_container_width=True, height=340)
+            st.download_button("Descargar unigramas (CSV)", df_uni.to_csv(index=False),
+                               "reviews_filtros_top_unigrams.csv", "text/csv")
+        with c2:
+            st.markdown("**Top Bigramas**")
+            st.dataframe(df_bi, use_container_width=True, height=340)
+            st.download_button("Descargar bigramas (CSV)", df_bi.to_csv(index=False),
+                               "reviews_filtros_top_bigrams.csv", "text/csv")
+
+        st.markdown("---")
+
+        # ----- WordCloud below -----
+        title = "WordCloud — reviews según filtros"
+        fig = draw_wordcloud(freq, title)
+        if fig is not None:
+            st.pyplot(fig, use_container_width=True)
         else:
-            topk = st.slider("Top términos para tablas", 10, 100, 25, 5)
-            docs = preprocess_docs(rdf["text_es"])
-            n_docs = sum(1 for d in docs if d)
-            token_total = sum(len(d.split()) for d in docs)
-
-            if n_docs < 5 or token_total < 25:
-                st.info(f"Muestra insuficiente para análisis (docs={n_docs}, tokens={token_total}). Amplíe filtros.")
-            else:
-                freq = build_freq(docs, topk=400)
-
-                # ===== 1) TABLAS (ARRIBA) =====
-                uni = {k:v for k,v in freq.items() if " " not in k}
-                bi  = {k:v for k,v in freq.items() if " " in k}
-                df_uni = top_table(uni, n=topk)
-                df_bi  = top_table(bi,  n=topk)
-
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.markdown("**Top Unigramas**")
-                    st.dataframe(df_uni, use_container_width=True, height=340)
-                    st.download_button("Descargar unigramas (CSV)",
-                        data=df_uni.to_csv(index=False),
-                        file_name="reviews_filtros_top_unigrams.csv",
-                        mime="text/csv")
-                with c2:
-                    st.markdown("**Top Bigramas**")
-                    st.dataframe(df_bi, use_container_width=True, height=340)
-                    st.download_button("Descargar bigramas (CSV)",
-                        data=df_bi.to_csv(index=False),
-                        file_name="reviews_filtros_top_bigrams.csv",
-                        mime="text/csv")
-
-                st.markdown("---")
-
-                # ===== 2) WORDCLOUD (ABAJO) =====
-                title = "WordCloud — reviews según filtros"
-                fig = draw_wordcloud(freq, title)
-                if fig is not None:
-                    st.pyplot(fig, use_container_width=True)
-                else:
-                    st.info("WordCloud no disponible; mostrando ranking de términos.")
-                    draw_bar_chart(freq, title)
+            st.info("WordCloud no disponible; mostrando ranking de términos.")
+            draw_bar_chart(freq, title)
