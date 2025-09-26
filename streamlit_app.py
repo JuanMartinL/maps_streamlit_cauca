@@ -52,9 +52,9 @@ def _load_b64(path: str):
         return ""
 
 with st.sidebar:
-    if os.path.exists("assets/logos.png"):
+    if os.path.exists("assets/logos.jpeg"):
         st.markdown('<div class="brand">', unsafe_allow_html=True)
-        st.image("assets/logos.png", use_container_width=True)
+        st.image("assets/logos.jpeg", use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
     b64 = _load_b64("assets/datad_logo.jpeg")
     if b64:
